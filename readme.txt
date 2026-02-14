@@ -1,7 +1,12 @@
 Renames stations with unique 3-letter town codes. E.g.
-Rail:   [TOW] Town Name
+
+Rail:   [TOW] Town
 Bus:    [TOW] B-001
 Tram:   [TOW] T-001
 Truck:  [TOW] F-001
-Air:    [TOW] Town Name Airport
-Sea:    [TOW] Town Name Dock
+Air:    [TOW] Town Airport
+Sea:    [TOW] Town Dock
+
+Set the town code length in parameters (2-5 character).
+
+Force a rename by renaming the station "!rename".
