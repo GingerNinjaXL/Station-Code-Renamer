@@ -1,188 +1,231 @@
-class StationCodeRenaming extends GSController {
+class StationRenamer extends GSController {
 
-    data = null;
+    existing_stations_id = {};
+    town_codes = {};
+    used_town_codes = {};
+
+    bus_counters = {};
+    tram_counters = {};
+    truck_counters = {};
+
+    last_station_count = 0;
 
     function Start() {
-        GSLog.Info("Station Code Renaming script started.");
+        while (true) {
 
-        // Initialize data
-        if (this.data == null) {
-            this.data = {
-                town_codes = {},
-                used_codes = {},
-                road_counters = {},
-                station_seen = {},
-                rail_main = {},
-                port_main = {},
-                airport_main = {}
-            };
-        }
+            local stations = GSStationList(GSStation.STATION_ANY);
+            if (stations == null || stations.IsEmpty()) {
+                Sleep(10);
+                continue;
+            }
 
-        // Wait a few seconds to let the game initialize
-        Sleep(5000);
+            local current_count = stations.Count();
+            if (current_count == this.last_station_count) {
+                Sleep(10);
+                continue;
+            }
 
-        // Get existing stations safely
-        local stations = GSStationList(GSStation.STATION_ANY);
-        if (stations != null) {
-            foreach (station_id in stations) {
-                if (station_id == 0 || !GSStation.IsValidStation(station_id)) continue;
-                local station_key = station_id.tostring();
-                if (!this.data.station_seen.exists(station_key)) {
-                    GSLog.Info("Initial rename of station ID: " + station_key);
+            this.last_station_count = current_count;
+
+            /* Build sorted station ID array for deterministic processing */
+            local station_ids = [];
+            for (local id = stations.Begin(); !stations.IsEnd(); id = stations.Next()) {
+                station_ids.append(id);
+            }
+            station_ids.sort();
+
+            foreach (station_id in station_ids) {
+                if (GSStation.IsValidStation(station_id) && !(station_id in this.existing_stations_id)) {
                     this.RenameStation(station_id);
-                    this.data.station_seen[station_key] = true;
+                    this.existing_stations_id[station_id] <- true;
                 }
             }
-        } else {
-            GSLog.Info("No stations found at start.");
+
+            Sleep(10);
         }
     }
 
-
-    // This ensures new stations are renamed immediately
-    function OnStationAdded(station_id) {
-        GSLog.Info("New station detected, renaming ID: " + station_id.tostring());
-        this.RenameStation(station_id);
-        this.data.station_seen[station_id.tostring()] = true;
+    function PadNumber(num) {
+        if (num < 10) return "00" + num;
+        if (num < 100) return "0" + num;
+        return num.tostring();
     }
 
-    function GetTownCode(town_id) {
-        if (this.data.town_codes.exists(town_id)) return this.data.town_codes[town_id];
-
-        try {
-            local name = GSTown.GetName(town_id).toupper();
-            local cleaned = "";
-            foreach (i, c in name) if (c != ' ') cleaned += c.tochar();
-            name = cleaned;
-
-            local name_array = [];
-            foreach (i, c in name) name_array.append(c);
-
-            local code = "";
-            for (local i = 0; i < 3 && i < name_array.len(); i++) code += name_array[i].tochar();
-            while (code.len() < 3) code += "X";
-
-            local original = [];
-            foreach (i, c in code) original.append(c);
-            local index = 3;
-
-            while (this.data.used_codes.exists(code)) {
-                if (index < name_array.len()) {
-                    code = original[0].tochar() + original[1].tochar() + name_array[index].tochar();
-                    index++;
-                } else {
-                    code = original[0].tochar() + original[1].tochar() + (index - name_array.len()).tostring();
-                    index++;
-                }
-            }
-
-            GSLog.Info("Assigning code [" + code + "] to town '" + name + "' (ID: " + town_id.tostring() + ")");
-            this.data.used_codes[code] = true;
-            this.data.town_codes[town_id] = code;
-            return code;
-
-        } catch (error) {
-            GSLog.Warning("GetTownCode error for town " + town_id.tostring() + ": " + error.tostring());
-            local fallback = "ZZZ";
-            for (local i = 0; i < 100; i++) {
-                if (!this.data.used_codes.exists(fallback)) {
-                    this.data.used_codes[fallback] = true;
-                    this.data.town_codes[town_id] = fallback;
-                    return fallback;
-                }
-                fallback = "Z" + i.tostring();
-            }
-            return "UNKNOWN";
-        }
-    }
-
-    function GetStationType(station_id) {
-        if (GSStation.HasStationType(station_id, GSStation.STATION_TRAIN)) return GSStation.STATION_TRAIN;
-        if (GSStation.HasStationType(station_id, GSStation.STATION_BUS_STOP)) return GSStation.STATION_BUS_STOP;
-        if (GSStation.HasStationType(station_id, GSStation.STATION_TRUCK_STOP)) return GSStation.STATION_TRUCK_STOP;
-        if (GSStation.HasStationType(station_id, GSStation.STATION_DOCK)) return GSStation.STATION_DOCK;
-        if (GSStation.HasStationType(station_id, GSStation.STATION_AIRPORT)) return GSStation.STATION_AIRPORT;
-        return GSStation.STATION_ANY;
+    function TruncateName(name) {
+        if (name.len() <= 31) return name;
+        return name.slice(0, 31);
     }
 
     function RenameStation(station_id) {
-        try {
-            GSLog.Info("Attempting to rename station ID: " + station_id.tostring());
 
-            local town_id = GSStation.GetNearestTown(station_id);
-            local town_name = GSTown.GetName(town_id);
-            local code = GetTownCode(town_id);
-            local type = GetStationType(station_id);
-            local name = "";
+        if (!GSStation.IsValidStation(station_id)) return;
+        local company_id = GSBaseStation.GetOwner(station_id);
+        local mode = GSCompanyMode(company_id);
 
-            switch (type) {
-                case GSStation.STATION_TRAIN:
-                    if (!this.TownHasRailMain(town_id)) {
-                        name = "[" + code + "] " + town_name;
-                        this.MarkRailMain(town_id);
-                    } else {
-                        name = "[" + code + "] " + town_name + " " + GSStation.GetName(station_id);
-                    }
-                    break;
+        local town_id = GSStation.GetNearestTown(station_id);
+        if (!GSTown.IsValidTown(town_id)) return;
 
-                case GSStation.STATION_BUS_STOP:
-                    name = "[" + code + "] " + (GSStation.HasRoadType(station_id, GSRoad.ROADTYPE_TRAM) ? this.GetRoadName(town_id, "T") : this.GetRoadName(town_id, "B"));
-                    break;
+        local code = this.GetTownCode(town_id);
+        local town_name = GSTown.GetName(town_id);
 
-                case GSStation.STATION_TRUCK_STOP:
-                    name = "[" + code + "] " + (GSStation.HasRoadType(station_id, GSRoad.ROADTYPE_TRAM) ? this.GetRoadName(town_id, "F") : this.GetRoadName(town_id, "L"));
-                    break;
+        local new_name = null;
+        local backup_name = null;
 
-                case GSStation.STATION_DOCK:
-                    if (!this.TownHasPortMain(town_id)) {
-                        name = "[" + code + "] " + town_name + " Port";
-                        this.MarkPortMain(town_id);
-                    } else {
-                        name = "[" + code + "] " + town_name + " " + GSStation.GetName(station_id);
-                    }
-                    break;
+        /* TRAIN */
+        if (GSStation.HasStationType(station_id, GSStation.STATION_TRAIN)) {
+            new_name = "[" + code + "] " + town_name;
+            backup_name = "[" + code + "] " + GSStation.GetName(station_id);
+        }
 
-                case GSStation.STATION_AIRPORT:
-                    if (!this.TownHasAirportMain(town_id)) {
-                        name = "[" + code + "] " + town_name + " Airport";
-                        this.MarkAirportMain(town_id);
-                    } else {
-                        name = "[" + code + "] " + town_name + " " + GSStation.GetName(station_id);
-                    }
-                    break;
+        /* AIRPORT */
+        else if (GSStation.HasStationType(station_id, GSStation.STATION_AIRPORT)) {
+            new_name = "[" + code + "] " + town_name + " Airport";
+            backup_name = "[" + code + "] " + GSStation.GetName(station_id) + " Airport";
+        }
 
-                default:
-                    name = "[" + code + "] " + town_name + " Station";
-                    break;
+        /* DOCK */
+        else if (GSStation.HasStationType(station_id, GSStation.STATION_DOCK)) {
+            new_name = "[" + code + "] " + town_name + " Dock";
+            backup_name = "[" + code + "] " + GSStation.GetName(station_id) + " Dock";
+        }
+
+        /* TRUCK */
+        else if (GSStation.HasStationType(station_id, GSStation.STATION_TRUCK_STOP)) {
+
+            if (!(town_id in this.truck_counters)) this.truck_counters[town_id] <- 1;
+
+            local num = this.truck_counters[town_id];
+            this.truck_counters[town_id]++;
+
+            new_name = "[" + code + "] F-" + this.PadNumber(num);
+        }
+
+        /* BUS / TRAM */
+        else if (GSStation.HasStationType(station_id, GSStation.STATION_BUS_STOP)) {
+
+            if (GSStation.HasRoadType(station_id, GSRoad.ROADTYPE_TRAM)) {
+
+                if (!(town_id in this.tram_counters)) this.tram_counters[town_id] <- 1;
+
+                local num = this.tram_counters[town_id];
+                this.tram_counters[town_id]++;
+
+                new_name = "[" + code + "] T-" + this.PadNumber(num);
             }
+            else {
 
-            GSLog.Info("Setting station name: " + name);
-            GSStation.SetName(station_id, name);
+                if (!(town_id in this.bus_counters)) this.bus_counters[town_id] <- 1;
 
-        } catch (error) {
-            GSLog.Warning("Failed to rename station " + station_id.tostring() + ": " + error.tostring());
+                local num = this.bus_counters[town_id];
+                this.bus_counters[town_id]++;
+
+                new_name = "[" + code + "] B-" + this.PadNumber(num);
+            }
+        }
+
+        if (new_name == null) return;
+
+        new_name = this.TruncateName(new_name);
+
+        local success = GSStation.SetName(station_id, new_name);
+
+        if (!success && backup_name != null) {
+            backup_name = this.TruncateName(backup_name);
+            GSStation.SetName(station_id, backup_name);
         }
     }
 
-    function GetRoadName(town_id, prefix) {
-        local town_key = town_id.tostring();
-        if (!this.data.road_counters.exists(town_key)) this.data.road_counters[town_key] = { B=1, L=1, T=1, F=1 };
+    function GetTownCode(town_id) {
 
-        local counters = this.data.road_counters[town_key];
-        local count = counters[prefix];
-        counters[prefix] = count + 1;
+        if (town_id in this.town_codes) {
+            return this.town_codes[town_id];
+        }
 
-        return prefix + "-" + format("%03d", count);
+        local town_name = GSTown.GetName(town_id);
+
+        local cleaned = "";
+        foreach (i, c in town_name) {
+            local ch = c.tochar();
+            if ((ch >= "A" && ch <= "Z") || (ch >= "a" && ch <= "z")) {
+                cleaned += ch;
+            }
+        }
+        town_name = cleaned;
+
+        local code = "";
+        for (local i = 0; i < 3 && i < town_name.len(); i++) {
+            code += town_name[i].tochar().toupper();
+        }
+        while (code.len() < 3) code += "X";
+
+        local original = [];
+        for (local i = 0; i < code.len(); i++) {
+            original.append(code[i].tochar().toupper());
+        }
+
+        local name_array = [];
+        for (local i = 0; i < town_name.len(); i++) {
+            name_array.append(town_name[i].tochar().toupper());
+        }
+
+        local extra_letters = ["X", "Y", "Z", "Q", "W"];
+        local extra_index = 0;
+        local position = 2;
+        local attempt = 0;
+
+        while (code in this.used_town_codes) {
+            attempt++;
+
+            if (position < name_array.len()) {
+                code = original[0] + original[1] + name_array[position];
+                position++;
+            } else if (extra_index < extra_letters.len()) {
+                code = original[0] + original[1] + extra_letters[extra_index];
+                extra_index++;
+            } else if (extra_index < 2 * extra_letters.len()) {
+                local mid = extra_index - extra_letters.len();
+                code = original[0] + extra_letters[mid] + original[2];
+                extra_index++;
+            } else if (extra_index < 3 * extra_letters.len()) {
+                local start = extra_index - 2 * extra_letters.len();
+                code = extra_letters[start] + original[1] + original[2];
+                extra_index++;
+            } else {
+                code = "";
+                for (local r = 0; r < 3; r++) {
+                    code += String.fromchar(65 + Random() % 26);
+                }
+            }
+
+            if (attempt > 999) break;
+        }
+
+        if (code == "") code = "XXX";
+
+        this.used_town_codes[code] <- true;
+        this.town_codes[town_id] <- code;
+        return code;
     }
 
-    function TownHasRailMain(town_id) { return this.data.rail_main.exists(town_id); }
-    function TownHasPortMain(town_id) { return this.data.port_main.exists(town_id); }
-    function TownHasAirportMain(town_id) { return this.data.airport_main.exists(town_id); }
+    function Save() {
+        return {
+            existing_stations_id = this.existing_stations_id,
+            town_codes = this.town_codes,
+            used_town_codes = this.used_town_codes,
+            bus_counters = this.bus_counters,
+            tram_counters = this.tram_counters,
+            truck_counters = this.truck_counters,
+            last_station_count = this.last_station_count
+        };
+    }
 
-    function MarkRailMain(town_id) { this.data.rail_main[town_id] = true; }
-    function MarkPortMain(town_id) { this.data.port_main[town_id] = true; }
-    function MarkAirportMain(town_id) { this.data.airport_main[town_id] = true; }
-
-    function Save() { return this.data; }
-    function Load(version, data) { this.data = data; }
+    function Load(version, data) {
+        if ("existing_stations_id" in data) this.existing_stations_id = data.existing_stations_id;
+        if ("town_codes" in data) this.town_codes = data.town_codes;
+        if ("used_town_codes" in data) this.used_town_codes = data.used_town_codes;
+        if ("bus_counters" in data) this.bus_counters = data.bus_counters;
+        if ("tram_counters" in data) this.tram_counters = data.tram_counters;
+        if ("truck_counters" in data) this.truck_counters = data.truck_counters;
+        if ("last_station_count" in data) this.last_station_count = data.last_station_count;
+    }
 }
