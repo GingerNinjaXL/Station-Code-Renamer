@@ -29,9 +29,10 @@ class StationRenamer extends GSController {
     };
 
     function Start() {
+        local sleepduration = this.GetSetting("SleepDuration");
         while (true) {
             local stations = GSStationList(GSStation.STATION_ANY);
-            if (stations == null || stations.IsEmpty()) { Sleep(10); continue; }
+            if (stations == null || stations.IsEmpty()) { Sleep(sleepduration); continue; }
 
             local current = {};
             local current_valid = {};
@@ -80,7 +81,7 @@ class StationRenamer extends GSController {
                 }
             }
 
-            Sleep(74);
+            Sleep(sleepduration);
         }
     }
 

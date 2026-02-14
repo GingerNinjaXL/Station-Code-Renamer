@@ -22,6 +22,18 @@ class StationRenamer extends GSInfo {
 			step_size = 1,
 			flags = 0  // normal numeric setting
 		});
+		AddSetting({
+			name = "SleepDuration",
+			description = "Sleep duration in ticks between station renaming cycles (1 tick = 30ms)",
+			min_value = 1,
+			max_value = 500,
+			easy_value = 10,
+			medium_value = 10,
+			hard_value = 10,
+			custom_value = 10,
+			step_size = 5,
+			flags = 0  // normal numeric setting
+		});
 	}
 
 }
