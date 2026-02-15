@@ -34,6 +34,18 @@ class StationRenamer extends GSInfo {
 			step_size = 5,
 			flags = 0  // normal numeric setting
 		});
+		AddSetting({
+			name = "RenameAllStationsOnBoot",
+			description = "DO NOT USE! All station names will be renamed every boot",
+			min_value = 0,
+			max_value = 1,
+			easy_value = 0,
+			medium_value = 0,
+			hard_value = 0,
+			custom_value = 0,
+			step_size = 1,
+			flags = GSInfo.CONFIG_BOOLEAN
+		});
 	}
 
 }
